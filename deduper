@@ -1,0 +1,105 @@
+#!/usr/bin/env ruby
+#
+# Copyright David Bishop <ruby@gnuconsulting.com>
+#
+
+require 'open-uri'
+require 'net/http'
+require 'json'
+require 'optparse'
+
+APIKEY = ENV['MAILERLITEAPIKEY'] || ''
+BASEURL = 'https://api.mailerlite.com/api/v2'
+
+$options = {}
+
+option_parser = OptionParser.new do |opts|
+  opts.banner = "Usage: deduper [options]"
+  opts.on('-l', '--list', "Print out all the lists and their numeric IDs") do
+    $options[:list] = true
+  end
+
+  opts.on('-d', '--dry-run', "Don't actually delete users, just tell me what users will be deleted") do
+    $options[:dryrun] = true
+  end
+
+  opts.on('--old-list LIST', Integer, "Numeric ID of the list to remove users from, used in combination with --new-list") do |list|
+    $options[:oldlist] = list
+  end
+
+  opts.on('--new-list LIST', Integer, "Numberic ID of the list the users may have moved to, used in combination with --old-list") do |list|
+    $options[:newlist] = list
+  end
+
+  opts.on('--api-key KEY', String, "Your MailerList API key. Required to be passed here or set in your environment as MAILERLITEAPIKEY") do |key|
+    $options[:apikey] = key
+  end
+end
+
+$options[:apikey] = $options[:apikey] || ENV['MAILERLITEAPIKEY']
+
+option_parser.parse!
+
+if ! $options[:apikey]
+  puts "You *must* pass an API key via --api-key KEY or set it in your environment as MAILERLITEAPIKEY"
+  exit 1
+end
+
+def getSubs(list)
+  return JSON.parse(open("#{BASEURL}/groups/#{list}/subscribers?limit=10000", "X-MailerLite-ApiKey" => $options[:apikey]).read)
+end
+
+def delSub(list, email)
+  url = URI.parse("#{BASEURL}/groups/#{list}/subscribers/#{email}")
+  del = Net::HTTP::Delete.new(url.path, {'X-MailerLite-ApiKey' => $options[:apikey]})
+  req = Net::HTTP.new(url.host, url.port)
+  req.use_ssl = true
+  res = req.start do |http|
+    http.request(del)
+  end
+  case res
+  when Net::HTTPSuccess then
+    return res.value
+  when Net::HTTPBadRequest
+    return res.body
+  when Net::HTTPNotFound
+    return "No such email #{email} on list #{list}"
+  else
+    return res.class
+  end
+end
+
+def listLists()
+  lists = JSON.parse(open("#{BASEURL}/groups", "X-MailerLite-ApiKey" => $options[:apikey]).read)
+  lists.each { |list|
+    puts "#{list['id']} is #{list['name']} with #{list['active']} active subscribers"
+  }
+end
+
+if $options[:list]
+  listLists()
+  exit 0
+end
+
+if ! $options[:oldlist] or ! $options[:newlist]
+  puts "You must supply both a list to delete from (--old-list) and a list to check against (--new-list)"
+  exit 1
+end
+
+oldsubs = getSubs($options[:oldlist])
+newsubs = getSubs($options[:newlist])
+
+oldemails = []
+oldsubs.each {|sub|
+  oldemails << sub['email']
+}
+
+newsubs.each { |sub|
+  if oldemails.include?(sub['email'])
+    if $options[:dryrun]
+      puts "Would delete #{sub['email']} with id #{sub['id']} from #{$options[:oldlist]}"
+    else
+      puts delSub($options[:oldlist], sub['email'])
+    end
+  end
+}
