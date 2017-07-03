@@ -99,7 +99,8 @@ newsubs.each { |sub|
     if $options[:dryrun]
       puts "Would delete #{sub['email']} with id #{sub['id']} from #{$options[:oldlist]}"
     else
-      puts delSub($options[:oldlist], sub['email'])
+      delSub($options[:oldlist], sub['email'])
+      puts "Did delete #{sub['email']} with id #{sub['id']} from #{$options[:oldlist]}"
     end
   end
 }
